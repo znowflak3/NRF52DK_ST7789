@@ -1,0 +1,14 @@
+{
+	"folders": [
+		{
+			"path": "../../.."
+		},
+		{
+			"path": ".."
+		},
+		{
+			"path": "../../../../softdevices/s132_nrf52_7.0.1_API"
+		}
+	],
+	"settings": {}
+}
