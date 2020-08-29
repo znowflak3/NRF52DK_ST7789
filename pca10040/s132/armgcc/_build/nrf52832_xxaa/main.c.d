@@ -143,7 +143,8 @@ _build/nrf52832_xxaa/main.c.o: ../../../main.c \
  ../../../../../../components/libraries/log/nrf_log_default_backends.h \
  ../../../../../../modules/nrfx/drivers/include/nrfx_spim.h \
  ../../../../../../modules/nrfx/hal/nrf_spim.h \
- ../../../../../../components/libraries/delay/nrf_delay.h
+ ../../../../../../components/libraries/delay/nrf_delay.h \
+ ../../../sans_serif_30x60.h ../../../clock.h
 
 /home/znowbolic/gcc-arm-none-eabi-9-2020-q2-update/lib/gcc/arm-none-eabi/9.3.1/include/stdint.h:
 
@@ -434,3 +435,7 @@ _build/nrf52832_xxaa/main.c.o: ../../../main.c \
 ../../../../../../modules/nrfx/hal/nrf_spim.h:
 
 ../../../../../../components/libraries/delay/nrf_delay.h:
+
+../../../sans_serif_30x60.h:
+
+../../../clock.h:
