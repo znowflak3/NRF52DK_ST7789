@@ -91,6 +91,8 @@
 
 #include "nrfx_spim.h"
 #include "nrf_delay.h"
+#include "sans_serif_30x60.h"
+#include "clock.h"
 
 
 #define DEVICE_NAME                     "OurService"                            /**< Name of device. Will be included in the advertising data. */
@@ -133,6 +135,10 @@ ble_os_t m_our_service;
 
 APP_TIMER_DEF(m_our_char_timer_id);
 #define OUR_CHAR_TIMER_INTERVAL         APP_TIMER_TICKS(1000) // 1000ms intervals
+
+APP_TIMER_DEF(m_our_clock_timer_id);
+#define OUR_CLOCK_TIMER_INTERVAL         APP_TIMER_TICKS(60000) // 1000ms intervals
+
 
 // STEP 5: Declare variable holding our service UUID
 static ble_uuid_t m_adv_uuids[] = 
@@ -187,24 +193,94 @@ static nrfx_spim_config_t spi_config = NRFX_SPIM_DEFAULT_CONFIG;
 
 static volatile bool spi_xfer_done;  /**< Flag used to indicate that SPI instance completed the transfer. */
 
+//commands
+static uint8_t lcd_cmd_ramwr = ST7789_CMD_RAMWR;
+static nrfx_spim_xfer_desc_t xfer_lcd_cmd_ramwr = NRFX_SPIM_XFER_TX(&lcd_cmd_ramwr, 1);
+
+//clock config
+static clock_position_t clock = {
+    60,     //start x
+    90,     //start y
+    89,     //width
+    149,    //height
+
+    90,
+    90,
+    119,
+    149,
+
+    120,
+    90,
+    149,
+    149,
+
+    150,
+    90,
+    179,
+    149
+};
+
+static clock_time_t clockTime = {
+    0,
+    0
+};
+
+void setWindow(uint8_t startX, uint8_t startY, uint8_t width, uint8_t height);
+void drawNumber(uint8_t x, uint8_t y, uint8_t width, uint8_t height, uint16_t textColor, uint16_t bgColor, uint8_t number);
+
 static void advertising_start(bool erase_bonds);
 
 static void timer_timeout_handler(void * p_context)
 {
+    //SEGGER_RTT_printf(0, "TICKTEST!");
     if(m_our_service.conn_handle != BLE_CONN_HANDLE_INVALID)
     {
         int32_t temperature = 0;
         sd_temp_get(&temperature);
-        SEGGER_RTT_printf(0, "temp: %d\n", temperature);
-        SEGGER_RTT_printf(0, "current_temp: %d\n", m_our_service.current_temp);
+        //SEGGER_RTT_printf(0, "temp: %d\n", temperature);
+        //SEGGER_RTT_printf(0, "current_temp: %d\n", m_our_service.current_temp);
         if(m_our_service.current_temp != temperature)
         {
-            SEGGER_RTT_printf(0, "changed temperature\n");
+            //SEGGER_RTT_printf(0, "changed temperature\n");
             our_temperature_characteristic_update(&m_our_service, &temperature);
             nrf_gpio_pin_toggle(20);
             m_our_service.current_temp = temperature;
         }
     }
+}
+
+static void clock_timer_handler(void * p_context)
+{
+    clockTime.minute++;
+
+    if(clockTime.minute >= 60){
+        clockTime.hour++;
+        clockTime.minute = 0;
+
+        
+
+        if(clockTime.hour >= 24){
+            clockTime.hour = 0;
+        }
+        //update display clock hours
+        uint8_t leftHour = clockTime.hour / 10;
+        uint8_t rightHour = clockTime.hour % 10;
+              
+        drawNumber(clock.startX_1, clock.startY_1, clock.width_1, clock.height_1, ST77XX_BLUE, ST77XX_BLACK, leftHour);
+        drawNumber(clock.startX_2, clock.startY_2, clock.width_2, clock.height_2, ST77XX_BLUE, ST77XX_BLACK, rightHour);
+
+        //nrf_delay_ms(500);
+    }
+    //update display clock minutes
+    uint8_t leftMin = clockTime.minute / 10;
+    uint8_t rightMin = clockTime.minute % 10;
+
+    drawNumber(clock.startX_3, clock.startY_3, clock.width_3, clock.height_3, ST77XX_BLUE, ST77XX_BLACK, leftMin);
+    drawNumber(clock.startX_4, clock.startY_4, clock.width_4, clock.height_4, ST77XX_BLUE, ST77XX_BLACK, rightMin);
+    
+    //nrf_delay_ms(500);
+ 
+    SEGGER_RTT_printf(0, "Clock: %d:%d\n", clockTime.hour, clockTime.minute);
 }
 
 
@@ -248,6 +324,8 @@ static void timers_init(void)
     err_code = app_timer_create(&m_our_char_timer_id, APP_TIMER_MODE_REPEATED, timer_timeout_handler);
     APP_ERROR_CHECK(err_code);
 
+    err_code = app_timer_create(&m_our_clock_timer_id, APP_TIMER_MODE_REPEATED, clock_timer_handler);
+    APP_ERROR_CHECK(err_code);
 
 }
 
@@ -512,6 +590,10 @@ static void application_timers_start(void)
     ret_code_t err_code; 
     err_code = app_timer_start(m_our_char_timer_id, OUR_CHAR_TIMER_INTERVAL, NULL);
     APP_ERROR_CHECK(err_code);
+
+    err_code = app_timer_start(m_our_clock_timer_id, OUR_CLOCK_TIMER_INTERVAL, NULL);
+    APP_ERROR_CHECK(err_code);
+
 }
 
 
@@ -521,6 +603,7 @@ static void application_timers_start(void)
  */
 static void sleep_mode_enter(void)
 {
+    SEGGER_RTT_printf(0, "SLEEP MODE ENTER!");
     ret_code_t err_code;
 
     err_code = bsp_indication_set(BSP_INDICATE_IDLE);
@@ -555,7 +638,7 @@ static void on_adv_evt(ble_adv_evt_t ble_adv_evt)
             break;
 
         case BLE_ADV_EVT_IDLE:
-            sleep_mode_enter();
+            //sleep_mode_enter();
             break;
 
         default:
@@ -912,6 +995,87 @@ void setDataPin()
 {
     nrf_gpio_pin_set(NRFX_SPIM_DCX_PIN);
 }
+void setWindow(uint8_t startX, uint8_t startY, uint8_t width, uint8_t height)
+{
+
+    uint8_t lcdTxCasetCmd = ST7789_CMD_CASET;
+    nrfx_spim_xfer_desc_t lcdXferCasetCmd = NRFX_SPIM_XFER_TX(&lcdTxCasetCmd, 1);
+
+    uint8_t lcdCasetData[] = {
+            (startX >> 8),
+            (startX & 0xFF),
+            (width >> 8),
+            (width & 0xFF)
+    };
+
+    nrfx_spim_xfer_desc_t lcdXferCasetData = NRFX_SPIM_XFER_TX(lcdCasetData, sizeof(lcdCasetData));
+
+    uint8_t lcdTxRasetCmd = ST7789_CMD_RASET;
+    nrfx_spim_xfer_desc_t lcdXferRasetCmd = NRFX_SPIM_XFER_TX(&lcdTxRasetCmd, 1);    
+
+    uint8_t lcdRasetData[] = {
+            (startY >> 8),
+            (startY & 0xFF),
+            (height >> 8),
+            (height & 0xFF)
+    };
+
+    nrfx_spim_xfer_desc_t lcdXferRasetData = NRFX_SPIM_XFER_TX(lcdRasetData, sizeof(lcdRasetData));
+
+    setCommandPin();
+    APP_ERROR_CHECK(nrfx_spim_xfer(&lcdSpi, &lcdXferCasetCmd, 0));
+    setDataPin();
+    APP_ERROR_CHECK(nrfx_spim_xfer(&lcdSpi, &lcdXferCasetData, 0));
+
+    setCommandPin();
+    APP_ERROR_CHECK(nrfx_spim_xfer(&lcdSpi, &lcdXferRasetCmd, 0));
+    setDataPin();
+    APP_ERROR_CHECK(nrfx_spim_xfer(&lcdSpi, &lcdXferRasetData, 0));
+}
+void drawPixel(uint8_t x, uint8_t y, uint8_t width, uint8_t height, uint16_t color)
+{
+
+}
+void drawBuffer()
+{
+    
+}
+void drawNumber(uint8_t x, uint8_t y, uint8_t width, uint8_t height, uint16_t textColor, uint16_t bgColor, uint8_t number){
+    
+    setWindow(x, y, width, height);
+
+    uint8_t bgColorData[] = {
+        (uint8_t)(bgColor >> 8),
+        (uint8_t)(bgColor & 0xFF)
+    };
+    nrfx_spim_xfer_desc_t bgData  = NRFX_SPIM_XFER_TX(&bgColorData, sizeof(bgColorData));
+
+    uint8_t textColorData[] = {
+        (uint8_t)(textColor >> 8),
+        (uint8_t)(textColor & 0xFF)
+    };
+    nrfx_spim_xfer_desc_t textData  = NRFX_SPIM_XFER_TX(&textColorData, sizeof(textColorData));
+
+    const uint16_t * numArray = sans_serif_30x60_get_number(number);
+    setCommandPin();
+    APP_ERROR_CHECK(nrfx_spim_xfer(&lcdSpi, &xfer_lcd_cmd_ramwr, 0));
+    setDataPin();
+
+    for (int i = 0; i < 1800; i++)
+    {
+        if(numArray[i] == ST77XX_RED)
+        {
+
+            APP_ERROR_CHECK(nrfx_spim_xfer(&lcdSpi, &bgData, 0));
+        }
+        else
+        {
+            APP_ERROR_CHECK(nrfx_spim_xfer(&lcdSpi, &textData, 0));
+        }   
+       
+
+    }
+}
 
 int main(void)
 {
@@ -944,15 +1108,6 @@ int main(void)
     const int16_t screenSizeX = 240;
     const int16_t screenSizeY = 240;
 
-    
-    //int16_t windowPositionX = 0;
-    //int16_t windowPositionY = 0;
-    //int16_t windowSizeX = 240;
-    //int16_t windowSizeY = 240;
-    
-    //nrf_gpio_cfg_output(NRFX_SPIM_SS_PIN);
-    //nrf_gpio_pin_clear(NRFX_SPIM_SS_PIN);
-
 
     // Hardware-reset the Screen controller
     nrf_gpio_pin_clear(NRFX_SPIM_RESET_PIN);
@@ -977,26 +1132,6 @@ int main(void)
     nrfx_spim_xfer_desc_t lcdXferMadctlCmd  = NRFX_SPIM_XFER_TX(&lcdTxMadctlCmd, 1);
     nrfx_spim_xfer_desc_t lcdXferMadctlData = NRFX_SPIM_XFER_TX(&lcdTxMadctlData, 1);
 
-    static uint8_t lcdTxCasetCmd = ST7789_CMD_CASET;
-    static uint8_t lcdTxCasetData[] = {
-            0,
-            0,
-            (uint8_t)(screenSizeX >> 8),
-            (uint8_t)(screenSizeX & 0xFF)
-    };
-    nrfx_spim_xfer_desc_t lcdXferCasetCmd = NRFX_SPIM_XFER_TX(&lcdTxCasetCmd, 1);
-    nrfx_spim_xfer_desc_t lcdXferCasetData = NRFX_SPIM_XFER_TX(lcdTxCasetData, sizeof(lcdTxCasetData));
-
-    static uint8_t lcdTxRasetCmd = ST7789_CMD_RASET;
-    static uint8_t lcdTxRasetData[] = {
-            0,
-            0,
-            (uint8_t)(screenSizeY >> 8),
-            (uint8_t)(screenSizeY & 0xFF)
-    };
-    nrfx_spim_xfer_desc_t lcdXferRasetCmd = NRFX_SPIM_XFER_TX(&lcdTxRasetCmd, 1);
-    nrfx_spim_xfer_desc_t lcdXferRasetData = NRFX_SPIM_XFER_TX(lcdTxRasetData, sizeof(lcdTxRasetData));
-
     static uint8_t lcdTxLast[] = {
             ST7789_CMD_INVON,
             ST7789_CMD_NORON,
@@ -1006,18 +1141,19 @@ int main(void)
 
     //write
     
-    uint16_t rawColor = ST77XX_CYAN;
+    uint16_t bgColor = ST77XX_BLACK;
     uint8_t lcdTxRamwrData[] = {
-            (uint8_t)(rawColor >> 8),
-            (uint8_t)(rawColor & 0xFF)
+        (uint8_t)(bgColor >> 8),
+        (uint8_t)(bgColor & 0xFF) 
     };
-    static uint8_t lcdcmd = ST7789_CMD_RAMWR;
+
+    uint8_t lcdcmd = ST7789_CMD_RAMWR;
 
     
     nrfx_spim_xfer_desc_t xferCmd  = NRFX_SPIM_XFER_TX(&lcdcmd, 1);
     nrfx_spim_xfer_desc_t xferData = NRFX_SPIM_XFER_TX(lcdTxRamwrData, sizeof(lcdTxRamwrData));
 
-    
+ 
 
     // Send the commands
     setCommandPin();
@@ -1037,42 +1173,36 @@ int main(void)
     setDataPin();
     APP_ERROR_CHECK(nrfx_spim_xfer(&lcdSpi, &lcdXferMadctlData, 0));
 
-    setCommandPin();
-    APP_ERROR_CHECK(nrfx_spim_xfer(&lcdSpi, &lcdXferCasetCmd, 0));
-    setDataPin();
-    APP_ERROR_CHECK(nrfx_spim_xfer(&lcdSpi, &lcdXferCasetData, 0));
-
-    setCommandPin();
-    APP_ERROR_CHECK(nrfx_spim_xfer(&lcdSpi, &lcdXferRasetCmd, 0));
-    setDataPin();
-    APP_ERROR_CHECK(nrfx_spim_xfer(&lcdSpi, &lcdXferRasetData, 0));
+    setWindow(0, 0, screenSizeX, screenSizeY);
 
     setCommandPin();
     APP_ERROR_CHECK(nrfx_spim_xfer(&lcdSpi, &lcdXferLast, 0));
     nrf_delay_ms(10);
 
-    //write
+    //write bg black
     
     setCommandPin();
     APP_ERROR_CHECK(nrfx_spim_xfer(&lcdSpi, &xferCmd, 0));
-    for(int i= 0; i < (240 * 240); i++)
-{    setDataPin();
-    APP_ERROR_CHECK(nrfx_spim_xfer(&lcdSpi, &xferData, 0));
-}
-    //test
-    static uint8_t lcdcmd2 = 0x20;
+    setDataPin();
 
-    nrfx_spim_xfer_desc_t xferCmd2  = NRFX_SPIM_XFER_TX(&lcdcmd2, 1);
+    int sbs = 57600;
 
-    setCommandPin();
-    APP_ERROR_CHECK(nrfx_spim_xfer(&lcdSpi, &xferCmd2, 0));
-
+    for(int i = 0; i < sbs; i++){
+        APP_ERROR_CHECK(nrfx_spim_xfer(&lcdSpi, &xferData, 0));
+    }
     
+    //clock
+    drawNumber(clock.startX_1, clock.startY_1, clock.width_1, clock.height_1, ST77XX_BLUE, ST77XX_BLACK, clockTime.hour / 10);
+    drawNumber(clock.startX_2, clock.startY_2, clock.width_2, clock.height_2, ST77XX_BLUE, ST77XX_BLACK, clockTime.hour % 10);
+    drawNumber(clock.startX_3, clock.startY_3, clock.width_3, clock.height_3, ST77XX_BLUE, ST77XX_BLACK, clockTime.minute / 10);
+    drawNumber(clock.startX_4, clock.startY_4, clock.width_4, clock.height_4, ST77XX_BLUE, ST77XX_BLACK, clockTime.minute % 10);
+    
+
     for (;;)
     {
         
-        NRF_LOG_INFO("test ending");
-        NRF_LOG_FLUSH();
+        //NRF_LOG_INFO("test ending");
+        //NRF_LOG_FLUSH();
     }
         while (!spi_xfer_done)
         {
