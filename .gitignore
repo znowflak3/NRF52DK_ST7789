@@ -2,4 +2,4 @@
 *.o
 *.hex
 *.d
-pca10040/s132/armgcc/_build/*
+pca10040/s132/armgcc/_build/*.*
